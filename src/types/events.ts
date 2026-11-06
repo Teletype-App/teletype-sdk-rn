@@ -54,7 +54,7 @@ export interface TeletypeEventMap {
   config: WidgetConfigData;
   /** The active UI language changed (payload is the two-letter language code). */
   localeChanged: string;
-  /** Chat title or primary color changed. */
+  /** Chat title, primary color, or background changed. */
   appearanceChanged: void;
   /** An error occurred. */
   error: Error;

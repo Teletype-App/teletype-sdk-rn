@@ -1,4 +1,4 @@
-# teletype-react-native-sdk
+# teletype-sdk-rn
 
 Нативный **React Native SDK** для встраивания онлайн-чата [Teletype](https://teletype.app) в мобильные приложения iOS и Android.
 
@@ -11,7 +11,7 @@ SDK использует тот же backend-протокол, что и **ве�
 ## Возможности
 
 - 💬 Обмен сообщениями в реальном времени по `socket.io` (индикатор набора, статусы «доставлено»/«прочитано»)
-- 🧩 Готовый `<ChatWidget />` (плавающая кнопка + модальное окно) **или** полноэкранный `<ChatScreen />`
+- 🧩 Готовый `<ChatWidget />` (плавающая кнопка) **и** `<ChatScreen />` как обычный экран хоста / навигации
 - 🪝 Headless-ядро (`TeletypeClient`) + React-хуки для полностью кастомного UI
 - 🔁 История сообщений, офлайн-очередь неотправленных, авто-переподключение
 - ⭐ Форма оценки оператора, сервисные/бот-сообщения, медиа-вложения (зум изображений, видео с превью, аудиоплеер, открытие/скачивание файлов)
@@ -24,7 +24,7 @@ SDK использует тот же backend-протокол, что и **ве�
 ## Установка
 
 ```bash
-npm install teletype-react-native-sdk socket.io-client@^2
+npm install teletype-sdk-rn socket.io-client@^2
 # рекомендуется для сохранения сессии между запусками:
 npm install @react-native-async-storage/async-storage
 ```
@@ -38,7 +38,29 @@ npm install @react-native-async-storage/async-storage
 ## Быстрый старт
 
 ```tsx
-import { TeletypeProvider, ChatWidget } from 'teletype-react-native-sdk';
+import {
+  TeletypeProvider,
+  ChatWidget,
+  ChatScreen,
+  useTeletype,
+  useTeletypeState,
+} from 'teletype-sdk-rn';
+
+function Root() {
+  const client = useTeletype();
+  const { opened } = useTeletypeState();
+
+  if (opened) {
+    return <ChatScreen onClose={() => client.hide()} />;
+  }
+
+  return (
+    <>
+      <YourApp />
+      <ChatWidget />
+    </>
+  );
+}
 
 export default function App() {
   return (
@@ -47,8 +69,7 @@ export default function App() {
       title="Онлайн чат"
       primaryColor="#0084ff"
     >
-      <YourApp />
-      <ChatWidget />
+      <Root />
     </TeletypeProvider>
   );
 }
@@ -61,7 +82,7 @@ export default function App() {
 ## Компоненты
 
 ### `<ChatWidget />`
-Всё-в-одном: плавающая кнопка с бейджем непрочитанных + модальное окно чата, привязанные к состоянию open/close клиента. Ближайший аналог вставки `<script>` на сайт.
+Плавающая кнопка с бейджем непрочитанных. Чат она **не** открывает — смонтируйте `<ChatScreen />` как обычный экран, когда `state.opened === true` (или по событию `openChanged`). Так пикер файлов и другие системные окна не упираются в React Native `<Modal>`.
 
 ```tsx
 <ChatWidget
@@ -71,13 +92,12 @@ export default function App() {
     scale: 100, // 70 | 80 | 90 | 100
     bottom: 32,
   }}
-  screenProps={{ placeholder: 'Спросите нас…' }}
 />
 ```
 
 #### Отправка файлов
 
-В поле ввода есть кнопка 📎. Выбор файла требует нативного модуля (и приложения по-разному выбирают документы, фотогалерею или камеру), поэтому SDK не навязывает конкретный пикер: передайте обработчик `onAttachmentPress`, который выбирает файл и вызывает `client.uploadFile(...)`. Загрузку (multipart) и отправку SDK берёт на себя.
+В поле ввода есть кнопка 📎. Выбор файла требует нативного модуля (и приложения по-разному выбирают документы, фотогалерею или камеру), поэтому SDK не навязывает конкретный пикер: передайте обработчик `onAttachmentPress`, который **выбирает файл и возвращает его**. Дальше SDK показывает окно подтверждения с **локальным превью** (Отмена / Отправить). После «Отправить» файл загружается и доставляется так же, как в веб-виджете: в чате появляется локальное превью, файл уходит на `widget-attachment/<channel_id>`, затем вложение отправляется по сокету.
 
 В примере ниже используется [`@react-native-documents/picker`](https://github.com/react-native-documents/document-picker) — обычная React Native библиотека (без зависимости от Expo), но подойдёт любой пикер:
 
@@ -88,22 +108,22 @@ const handleAttachment = async () => {
   try {
     const [file] = await pick();
     if (!file) return;
-    await client.uploadFile({
+    return {
       uri: file.uri,
       name: file.name ?? 'file',
       type: file.type ?? 'application/octet-stream',
       size: file.size ?? undefined,
-    });
+    };
   } catch (e) {
     if (isErrorWithCode(e) && e.code === errorCodes.OPERATION_CANCELED) return; // пользователь закрыл выбор
     throw e;
   }
 };
 
-<ChatWidget screenProps={{ onAttachmentPress: handleAttachment }} />
+<ChatScreen onAttachmentPress={handleAttachment} />
 ```
 
-Без обработчика `onAttachmentPress` кнопка 📎 показывается, но неактивна. `uploadFile` бросает ошибку (и генерирует событие `error`) для файлов больше 20 МБ.
+Без обработчика `onAttachmentPress` кнопка 📎 показывается, но неактивна. Файлы больше 20 МБ и типы, которые веб-виджет не принимает, отклоняются (`fileSizeError` / `fileFormatNotAllowed`). Чтобы отправить файл программно без окна подтверждения, вызовите `client.uploadFile(...)`.
 
 #### Просмотр медиа-вложений
 
@@ -138,13 +158,58 @@ cd ios && pod install
 - **Файлы / текст** — тап по иконке или имени скачивает (первый раз) и открывает системным приложением.
 
 ### `<ChatScreen />`
-Полный экран чата (шапка + сообщения + поле ввода). Встраивайте в свой экран или навигатор вместо модалки.
+Полный экран чата (шапка + сообщения + поле ввода). Открывайте его как **обычный экран хоста / навигации** — не внутри React Native `<Modal>`.
 
 ```tsx
-import { ChatScreen } from 'teletype-react-native-sdk';
+import { ChatScreen, useTeletype, useTeletypeState } from 'teletype-sdk-rn';
 
-function SupportScreen() {
-  return <ChatScreen showClose={false} placeholder="Сообщение…" />;
+function Root() {
+  const client = useTeletype();
+  const { opened } = useTeletypeState();
+  if (opened) {
+    return (
+      <ChatScreen
+        placeholder="Сообщение…"
+        onAttachmentPress={handleAttachment}
+        onClose={() => client.hide()}
+      />
+    );
+  }
+  return (
+    <>
+      <Home />
+      <ChatWidget />
+    </>
+  );
+}
+```
+
+С React Navigation пушьте экран по `openChanged` и вызывайте `client.hide()` при выходе:
+
+```tsx
+function Home({ navigation }) {
+  useTeletypeEvent('openChanged', (opened) => {
+    if (opened) navigation.navigate('Chat');
+  });
+  return (
+    <>
+      <HomeContent />
+      <ChatWidget />
+    </>
+  );
+}
+
+function ChatRoute({ navigation }) {
+  const client = useTeletype();
+  return (
+    <ChatScreen
+      onAttachmentPress={handleAttachment}
+      onClose={() => {
+        client.hide();
+        navigation.goBack();
+      }}
+    />
+  );
 }
 ```
 
@@ -175,14 +240,16 @@ function SupportScreen() {
 | `client.setPersonData(info)` | `_teletypeWidget.setPersonData()` | Передать данные персоны |
 | `client.greetingMessages([...])` | `_teletypeWidget.greetingMessages()` | Приветственные сообщения бота |
 | `client.sendMessage(text)` | — | Отправить сообщение программно |
-| `client.uploadFile({uri,name,type,size?})` | — | Загрузить и отправить вложение (файлы больше 20 МБ отклоняются) |
+| `client.uploadAttachment({uri,name,type,size?})` | — | Загрузить файл без отправки (возвращает `{ attachment, attachmentId, attachmentUrl, type }`) |
+| `client.sendAttachment(...)` | — | Отправить уже загруженное вложение |
+| `client.uploadFile({uri,name,type,size?})` | — | Загрузить и отправить вложение без окна подтверждения (файлы больше 20 МБ / запрещённые типы отклоняются) |
 | `client.rateAppeal(value, tempId?)` | — | Отправить оценку диалога |
 | `client.markSeen()` | — | Пометить входящие как прочитанные |
 | `client.setTitle(text)` | — | Сменить заголовок хедера чата |
 | `client.setPrimaryColor(color)` | — | Сменить общий цвет кнопки и хедера |
 
 ```tsx
-import { useTeletype } from 'teletype-react-native-sdk';
+import { useTeletype } from 'teletype-sdk-rn';
 
 function OpenChatButton() {
   const client = useTeletype();
@@ -255,7 +322,7 @@ useTeletypeEvent('messageReceived', (msg) => {
 ### Пример кастомного UI
 
 ```tsx
-import { useMessages, useTeletypeActions } from 'teletype-react-native-sdk';
+import { useMessages, useTeletypeActions } from 'teletype-sdk-rn';
 
 function MyChat() {
   const messages = useMessages();
@@ -271,7 +338,7 @@ function MyChat() {
 Ядро не зависит от фреймворка — удобно для обработки push-уведомлений в фоне:
 
 ```ts
-import { TeletypeClient } from 'teletype-react-native-sdk';
+import { TeletypeClient } from 'teletype-sdk-rn';
 
 const client = new TeletypeClient({ teletypeExternalId: 'ВАШ_EXTERNAL_ID' });
 await client.init();
@@ -293,7 +360,7 @@ client.on('messageReceived', showLocalNotification);
   title="Онлайн чат"
   primaryColor="#0084ff"
 >
-  <ChatWidget
+  <ChatScreen
     theme={{
       backgroundColor: '#f8fafc',
       bubbleRadius: 20,
@@ -399,7 +466,7 @@ SDK поставляется с **английским** и **русским** �
 
 ```ts
 // localization.ts
-import type { TeletypeTranslations } from 'teletype-react-native-sdk';
+import type { TeletypeTranslations } from 'teletype-sdk-rn';
 
 export const translations: TeletypeTranslations = {
   ru: { statusOffline: 'Мы онлайн — ответим сразу' }, // переопределяем одну строку
@@ -430,7 +497,7 @@ client.setLocale();              // перечитать язык системы
 ### Локализация своего UI
 
 ```tsx
-import { useTeletypeStrings, useLocale } from 'teletype-react-native-sdk';
+import { useTeletypeStrings, useLocale } from 'teletype-sdk-rn';
 
 const strings = useTeletypeStrings(); // строки для активного языка
 const locale = useLocale();           // 'ru' | 'en' | …
@@ -477,7 +544,7 @@ npm run ios   # или: npm run android
 
 SDK повторяет протокол веб-виджета:
 
-- **REST** (`{apiUrl}api/v1/…`, хост зависит от `mode`): `widget/{id}/config`, `widget/ip`, `history/{id}/{appeal}/messages`, `POST widget-attachment/{channelId}` (multipart `file` + `appeal_id`, без авторизации), `collect`, `widget/error`, `widget/{id}/url`.
+- **REST** (`{apiUrl}api/v1/…`, хост зависит от `mode`): `widget/{id}/config`, `widget/ip`, `history/{id}/{appeal}/messages`, `POST widget-attachment/{channelId}` (multipart `file` + `externalId`, без авторизации), `collect`, `widget/error`, `widget/{id}/url`.
 - **WebSocket** (`socket.io` v2, `{wsUrl}` хост зависит от `mode`): отправляет `web widget message from person`, `auth person`, `set person data`, `seen`, `person typing`, `person opened widget`, `person rate appeal`, `person click widget channel`; слушает `init data to person`, `message from client`, `received`, `seen`, `operator typing`, `operator status change`, `appeal status change`.
 
 Ключи полезной нагрузки на проводе — `snake_case`, при разборе приводятся к `camelCase`.

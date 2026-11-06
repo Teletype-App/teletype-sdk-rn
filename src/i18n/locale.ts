@@ -18,7 +18,7 @@ export type TeletypeTranslations = Record<string, Partial<TeletypeStrings>>;
  * `ru_RU` / `ru-RU` / `RU` -> `ru`, `en-US` -> `en`.
  */
 export function normalizeLanguage(locale?: string | null): string {
-  if (!locale) {
+  if (!locale || typeof locale !== 'string') {
     return DEFAULT_LOCALE;
   }
   const lang = locale.split(/[-_]/)[0]?.toLowerCase();

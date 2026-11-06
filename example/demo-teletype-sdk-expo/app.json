@@ -5,13 +5,18 @@
     "version": "1.0.0",
     "scheme": "teletypesdkexample",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.teletype.sdkexample"
     },
     "android": {
-      "package": "app.teletype.sdkexample"
+      "package": "app.teletype.sdkexample",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FF3B30"
+      }
     },
     "plugins": [
       "expo-status-bar",

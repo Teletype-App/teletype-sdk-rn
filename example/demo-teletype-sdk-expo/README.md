@@ -1,6 +1,6 @@
 # Teletype SDK — Expo example
 
-Runnable Expo demo of `teletype-react-native-sdk`.
+Runnable Expo demo of `teletype-sdk-rn`.
 
 - **Expo SDK:** 57 (React Native 0.86, React 19.2) — the latest at time of writing
 - **New Architecture:** always on (mandatory in SDK 55+); the SDK is pure JS so it works out of the box
@@ -17,7 +17,7 @@ npm run ios      # or: npm run android  |  npm run web
 
 ## How the local link works
 
-The example consumes the SDK via `"teletype-react-native-sdk": "file:.."`. The
+The example consumes the SDK via `"teletype-sdk-rn": "file:.."`. The
 SDK's `react-native` entry points at its TypeScript source, so Metro bundles it
 directly — no build step required while developing. `metro.config.js` watches
 the parent folder and forces a single copy of `react` / `react-native`.

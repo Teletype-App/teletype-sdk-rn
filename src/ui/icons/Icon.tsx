@@ -36,6 +36,7 @@ const materialCommunitySlot: Cache = { value: null, loaded: false };
 const fontAwesome5Slot: Cache = { value: null, loaded: false };
 const simpleLineSlot: Cache = { value: null, loaded: false };
 const octiconsSlot: Cache = { value: null, loaded: false };
+const ioniconsSlot: Cache = { value: null, loaded: false };
 
 /**
  * Icon families used by media bubbles / fullscreen controls.
@@ -88,6 +89,15 @@ export const Icons = {
     return cached(octiconsSlot, () => {
       try {
         return fromModule(require('react-native-vector-icons/Octicons'));
+      } catch {
+        return null;
+      }
+    });
+  },
+  get Ionicons(): IconComponent | null {
+    return cached(ioniconsSlot, () => {
+      try {
+        return fromModule(require('react-native-vector-icons/Ionicons'));
       } catch {
         return null;
       }

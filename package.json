@@ -1,5 +1,5 @@
 {
-  "name": "teletype-react-native-sdk",
+  "name": "teletype-sdk-rn",
   "version": "0.1.0",
   "description": "React Native SDK for embedding the Teletype online chat into iOS and Android apps. Reimplements the Teletype web widget protocol (REST + socket.io) natively.",
   "license": "MIT",
@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run copy:i18n",
-    "copy:i18n": "mkdir -p lib/commonjs/i18n && cp src/i18n/*.json lib/commonjs/i18n/ && mkdir -p lib/commonjs/ui/svg/ChatButtonSvg && cp src/ui/svg/ChatButtonSvg/*.png lib/commonjs/ui/svg/ChatButtonSvg/",
+    "copy:i18n": "mkdir -p lib/commonjs/i18n && cp src/i18n/*.json lib/commonjs/i18n/ && mkdir -p lib/commonjs/ui/svg/ChatButtonSvg && cp src/ui/svg/ChatButtonSvg/*.png lib/commonjs/ui/svg/ChatButtonSvg/ && mkdir -p lib/commonjs/ui/backgrounds && cp src/ui/backgrounds/*.png lib/commonjs/ui/backgrounds/",
     "clean": "rimraf lib",
     "typecheck": "tsc --noEmit",
     "prepare": "npm run clean && npm run build"

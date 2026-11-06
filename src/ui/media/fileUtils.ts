@@ -34,6 +34,17 @@ const AUDIO_EXTS = new Set([
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'file';
 
+/** True when `uri` points at an image (a video cover), not a video file. */
+export function isImagePreviewUri(uri?: string | null): boolean {
+  if (!uri) {
+    return false;
+  }
+  if (/^data:image\//i.test(uri)) {
+    return true;
+  }
+  return IMAGE_EXTS.has(getExt(uri));
+}
+
 /** Extension without the leading dot, lowercased. */
 export function getExt(nameOrUrl = ''): string {
   const clean = nameOrUrl.split('?')[0].split('#')[0];

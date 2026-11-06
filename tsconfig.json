@@ -15,7 +15,7 @@
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {
-      "teletype-react-native-sdk": ["./src/index.ts"]
+      "teletype-sdk-rn": ["./src/index.ts"]
     }
   },
   "include": ["src"],

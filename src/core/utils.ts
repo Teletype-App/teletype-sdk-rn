@@ -39,7 +39,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 /** Recursively convert object keys to snake_case (for socket/REST payloads). */
 export function snakeKeys<T = unknown>(input: T): unknown {
-  if (input === null || input === undefined) {
+  // Web widget `api.snakeKeys(null)` returns `''`. The backend treats an empty
+  // string as "no person/appeal yet"; JSON `null` is not the same and the
+  // `received` ack never arrives.
+  if (input === null) {
+    return '';
+  }
+  if (input === undefined) {
     return input;
   }
   if (Array.isArray(input)) {

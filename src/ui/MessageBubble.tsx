@@ -136,6 +136,22 @@ export function MessageBubble({
     if (!isOwn) {
       return time;
     }
+    if (message.errorMessage) {
+      if (message.errorMessage === 'fileSizeError') {
+        return strings.fileSizeError;
+      }
+      if (message.errorMessage === 'fileFormatNotAllowed') {
+        return strings.fileFormatNotAllowed;
+      }
+      return strings.uploadFailed;
+    }
+    if (
+      typeof message.progress === 'number' &&
+      message.progress < 100 &&
+      !message.errorMessage
+    ) {
+      return `${strings.uploading} (${message.progress}%)`;
+    }
     if (message.status === 'sending') {
       return strings.messageSending;
     }
@@ -145,7 +161,12 @@ export function MessageBubble({
     const state = message.seen ? strings.messageSeen : strings.messageDelivered;
     return time ? `${time}. ${state}` : state;
   };
-  const failed = isOwn && message.status === 'failed';
+  const failed = isOwn && message.status === 'failed' && !message.errorMessage;
+  const uploading =
+    isOwn &&
+    typeof message.progress === 'number' &&
+    message.progress < 100 &&
+    !message.errorMessage;
 
   const tailStyle = emojiOnly || isVisualMedia
     ? null
@@ -211,7 +232,13 @@ export function MessageBubble({
         !isOwn && <View style={styles.avatarPlaceholder} />
       )}
 
-      <View style={[styles.bubbleWrap, isVisualMedia && styles.bubbleWrapMedia]}>
+      <View
+        style={[
+          styles.bubbleWrap,
+          isVisualMedia && styles.bubbleWrapMedia,
+          isOwn ? styles.bubbleWrapOwn : styles.bubbleWrapOther,
+        ]}
+      >
         <View
           style={[
             styles.bubble,
@@ -227,6 +254,11 @@ export function MessageBubble({
           ]}
         >
           {renderBody()}
+          {uploading ? (
+            <View style={styles.uploadOverlay} pointerEvents="none">
+              <Text style={styles.uploadText}>{`${message.progress}%`}</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={[styles.meta, isOwn ? styles.metaRight : styles.metaLeft]}>
@@ -249,18 +281,30 @@ export function MessageBubble({
 
 const styles = StyleSheet.create({
   row: {
+    alignSelf: 'stretch',
+    width: '100%',
     flexDirection: 'row',
     marginVertical: 5,
-    paddingHorizontal: 12,
     alignItems: 'flex-end',
   },
-  rowRight: { justifyContent: 'flex-end' },
-  rowLeft: { justifyContent: 'flex-start' },
+  rowRight: {
+    justifyContent: 'flex-end',
+    paddingLeft: 48,
+    paddingRight: 8,
+  },
+  rowLeft: {
+    justifyContent: 'flex-start',
+    paddingLeft: 12,
+    paddingRight: 48,
+  },
   bubbleWrap: { maxWidth: '78%' },
   bubbleWrapMedia: { maxWidth: 250 },
+  bubbleWrapOwn: { alignItems: 'flex-end' },
+  bubbleWrapOther: { alignItems: 'flex-start' },
   bubble: {
     paddingHorizontal: 15,
     paddingVertical: 11,
+    overflow: 'hidden',
   },
   mediaBubble: {
     paddingHorizontal: 0,
@@ -285,4 +329,19 @@ const styles = StyleSheet.create({
   metaRight: { justifyContent: 'flex-end' },
   metaLeft: { justifyContent: 'flex-start' },
   metaText: { fontSize: 12.5 },
+  uploadOverlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: '#00000080',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
 });

@@ -4,6 +4,7 @@ import {
   HistoryResponse,
   UploadFileResponse,
 } from '../types/config';
+import { LocalFile } from '../types/file';
 import { camelKeys, serialize, snakeKeys } from './utils';
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires, global-require */
@@ -17,12 +18,6 @@ function getBlobUtil(): any {
   }
 }
 
-type LocalFile = {
-  uri: string;
-  name: string;
-  type: string;
-};
-
 function parseUploadBody(raw: unknown): UploadFileResponse {
   let body: unknown = raw;
   if (typeof body === 'string') {
@@ -30,6 +25,105 @@ function parseUploadBody(raw: unknown): UploadFileResponse {
   }
   return camelKeys(body) as UploadFileResponse;
 }
+
+function decodePath(uri: string): string {
+  try {
+    return decodeURIComponent(uri);
+  } catch {
+    try {
+      return decodeURI(uri);
+    } catch {
+      return uri;
+    }
+  }
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  return values.filter((value, index, all) => !!value && all.indexOf(value) === index);
+}
+
+function isContentLikeUri(uri: string): boolean {
+  return /^(content|ph|assets-library):\/\//i.test(uri);
+}
+
+/**
+ * Paths that `fs.cp` / `wrap` can actually open. iOS document-picker URIs
+ * come in as `file:///private/var/…` (percent-encoded); `wrap()` always
+ * prefixes `ReactNativeBlobUtil-file://`, so a leftover `file://` becomes a
+ * double scheme and native `fetchBlobForm` fails to create the body.
+ */
+function candidateFilePaths(uri: string): string[] {
+  const decoded = decodePath(uri);
+  if (isContentLikeUri(decoded)) {
+    return uniqueNonEmpty([decoded, uri]);
+  }
+  const stripped = decoded.replace(/^file:\/\//, '');
+  const withoutPrivate = stripped.replace(/^\/private\//, '/');
+  return uniqueNonEmpty([decoded, stripped, withoutPrivate, uri]);
+}
+
+async function copyUriToPath(
+  blobUtil: any,
+  source: string,
+  dest: string,
+): Promise<boolean> {
+  try {
+    await blobUtil.fs.cp(source, dest);
+    if (await blobUtil.fs.exists(dest)) {
+      const stat = await blobUtil.fs.stat(dest);
+      if (stat && Number(stat.size) > 0) {
+        return true;
+      }
+    }
+  } catch {
+    // try fetch() copy below
+  }
+  try {
+    if (blobUtil.config && typeof blobUtil.fetch === 'function') {
+      const res = await blobUtil
+        .config({ path: dest, overwrite: true })
+        .fetch('GET', source);
+      const path = typeof res?.path === 'function' ? res.path() : dest;
+      return !!(path && (await blobUtil.fs.exists(path)));
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Copy the picked file into the app cache, then wrap a bare filesystem path.
+ * Inbox / security-scoped picker URIs often cannot be read in-place.
+ * Android gallery picks arrive as `content://` — `fs.cp` plus a GET-to-cache
+ * fallback, matching how the web widget uploads a real File blob.
+ */
+async function wrapLocalFile(
+  blobUtil: any,
+  uri: string,
+  filename: string,
+): Promise<string> {
+  const cacheDir = blobUtil.fs?.dirs?.CacheDir as string | undefined;
+  const safeName = (filename || 'file').replace(/[\\/]/g, '_');
+  const sources = candidateFilePaths(uri);
+
+  if (cacheDir) {
+    const dest = `${cacheDir}/teletype-up-${Date.now()}-${safeName}`;
+    for (const source of sources) {
+      if (await copyUriToPath(blobUtil, source, dest)) {
+        return blobUtil.wrap(dest);
+      }
+    }
+  }
+
+  const decoded = decodePath(uri);
+  if (isContentLikeUri(decoded)) {
+    return blobUtil.wrap(decoded);
+  }
+  return blobUtil.wrap(decoded.replace(/^file:\/\//, '') || decoded);
+}
+
+export type UploadProgressHandler = (progress: number) => void;
 
 /**
  * Thin REST client for the Teletype widget HTTP API. Endpoints and payload
@@ -116,48 +210,69 @@ export class ApiClient {
 
   /**
    * Upload a local file as multipart/form-data.
-   * `POST api/v1/widget-attachment/<channel_id>` — no auth / X-Project-Id.
-   * Dialog id (`appeal_id`) is sent in the body when known.
+   * `POST api/v1/widget-attachment/<channel_id>` — matches the web widget:
+   * body is `file` + `externalId`. No auth / X-Project-Id.
    *
    * Uses `react-native-blob-util` when installed (RN's `fetch`+`FormData` throws
    * `Unsupported FormDataPart implementation` on the New Architecture). Falls
    * back to XMLHttpRequest.
    */
-  async uploadFile(file: LocalFile, appealId?: string): Promise<UploadFileResponse> {
+  async uploadFile(
+    file: LocalFile,
+    onProgress?: UploadProgressHandler,
+  ): Promise<UploadFileResponse> {
     const url = this.v(`widget-attachment/${this.externalId}`);
     const blobUtil = getBlobUtil();
-    if (blobUtil?.fetch && blobUtil.wrap) {
-      return this.uploadFileWithBlobUtil(blobUtil, url, file, appealId);
+    if (blobUtil?.fetch && blobUtil.wrap && blobUtil.fs) {
+      try {
+        return await this.uploadFileWithBlobUtil(
+          blobUtil,
+          url,
+          file,
+          onProgress,
+        );
+      } catch {
+        // Android `content://` and some picker URIs fail in blob-util; RN
+        // FormData can still read them through the ContentResolver.
+      }
     }
-    return this.uploadFileWithXhr(url, file, appealId);
+    return this.uploadFileWithXhr(url, file, onProgress);
   }
 
   private async uploadFileWithBlobUtil(
     blobUtil: any,
     url: string,
     file: LocalFile,
-    appealId?: string,
+    onProgress?: UploadProgressHandler,
   ): Promise<UploadFileResponse> {
     const parts: Array<Record<string, string>> = [
       {
         name: 'file',
         filename: file.name || 'file',
         type: file.type || 'application/octet-stream',
-        data: blobUtil.wrap(file.uri),
+        data: await wrapLocalFile(blobUtil, file.uri, file.name),
       },
+      { name: 'externalId', data: this.externalId },
     ];
-    if (appealId) {
-      parts.push({ name: 'appeal_id', data: String(appealId) });
-      parts.push({ name: 'dialog_id', data: String(appealId) });
+    // Do not set Content-Type: blob-util adds the multipart boundary itself.
+    // A bare `multipart/form-data` header makes fetchBlobForm fail to build the body.
+    let task = blobUtil.fetch('POST', url, {}, parts);
+    if (onProgress && typeof task?.uploadProgress === 'function') {
+      task = task.uploadProgress((written: number, total: number) => {
+        if (total > 0) {
+          onProgress(Math.round((written / total) * 100));
+        }
+      });
     }
-    const resp = await blobUtil.fetch(
-      'POST',
-      url,
-      { 'Content-Type': 'multipart/form-data' },
-      parts,
-    );
+    const resp = await task;
     const status = resp?.info?.()?.status;
-    const raw = typeof resp?.data === 'string' ? resp.data : resp?.text?.() ?? resp?.data;
+    const raw =
+      typeof resp?.data === 'string' ? resp.data : resp?.text?.() ?? resp?.data;
+    if (typeof status === 'number' && (status < 200 || status >= 300)) {
+      throw new Error(
+        `uploadFailed: ${status} ${String(raw).slice(0, 200)}`,
+      );
+    }
     try {
       return parseUploadBody(raw);
     } catch {
@@ -170,7 +285,7 @@ export class ApiClient {
   private uploadFileWithXhr(
     url: string,
     file: LocalFile,
-    appealId?: string,
+    onProgress?: UploadProgressHandler,
   ): Promise<UploadFileResponse> {
     return new Promise((resolve, reject) => {
       const form = new FormData();
@@ -179,13 +294,25 @@ export class ApiClient {
         name: file.name || 'file',
         type: file.type || 'application/octet-stream',
       } as unknown as Blob);
-      if (appealId) {
-        form.append('appeal_id', String(appealId));
-        form.append('dialog_id', String(appealId));
-      }
+      form.append('externalId', this.externalId);
       const xhr = new XMLHttpRequest();
       xhr.open('POST', url);
+      if (onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && e.total > 0) {
+            onProgress(Math.round((e.loaded / e.total) * 100));
+          }
+        };
+      }
       xhr.onload = () => {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(
+            new Error(
+              `uploadFailed: ${xhr.status} ${String(xhr.responseText).slice(0, 200)}`,
+            ),
+          );
+          return;
+        }
         try {
           resolve(parseUploadBody(xhr.responseText));
         } catch {

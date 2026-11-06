@@ -1,6 +1,6 @@
 /**
  * Visual theme for the built-in UI. Every value has a sensible default; pass a
- * partial `theme` to `<ChatWidget>` / `<ChatScreen>` to override. The shared
+ * partial `theme` to `<ChatScreen>` / `<ChatWidget>` to override. The shared
  * accent (`primaryColor`) is set on `<TeletypeProvider>` and colors both the
  * launcher button and the chat header.
  */

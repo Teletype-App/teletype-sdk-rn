@@ -12,6 +12,8 @@
  * Expo.
  */
 
+import { Platform } from 'react-native';
+
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires, global-require */
 
 type Cache = { value: any; loaded: boolean };
@@ -41,8 +43,20 @@ export function getVideoComponent(): any {
   return mod?.default ?? mod ?? null;
 }
 
-/** `react-native-create-thumbnail` — `createThumbnail({ url })`. */
+/**
+ * `react-native-create-thumbnail` — iOS only.
+ *
+ * On Android `MediaMetadataRetriever.setDataSource` throws an uncaught
+ * `RuntimeException` (`status = 0x80000000`) on images, `content://` URIs and
+ * many remote files. The exception runs on a thread-pool thread, so a JS
+ * `try/catch` cannot stop the process crash. The web widget never generates
+ * video covers client-side; teletype-mobile dropped this library for the
+ * same reason.
+ */
 export function getCreateThumbnail(): ((opts: any) => Promise<any>) | null {
+  if (Platform.OS === 'android') {
+    return null;
+  }
   const mod = cached(thumbSlot, () => require('react-native-create-thumbnail'));
   const fn = mod?.createThumbnail ?? mod?.default?.createThumbnail;
   return typeof fn === 'function' ? fn : null;

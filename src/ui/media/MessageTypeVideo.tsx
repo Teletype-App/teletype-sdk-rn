@@ -14,7 +14,7 @@ import { TeletypeTheme } from '../theme';
 import { TeletypeStrings } from '../../i18n/strings';
 import { Icon, Icons } from '../icons';
 import { ChatSafeAreaProvider } from '../safeArea';
-import { getCreateThumbnail, getVideoComponent } from './nativeModules';
+import { getVideoComponent } from './nativeModules';
 import { MediaControl } from './MediaControl';
 import {
   canDownloadLocally,
@@ -26,8 +26,9 @@ import {
   attachmentName,
   attachmentUrl,
   fitMediaSize,
-  MEDIA_MAX_SIDE,
+  isImagePreviewUri,
 } from './fileUtils';
+import { createVideoThumbnail } from './thumbnail';
 
 interface Props {
   message: Message;
@@ -44,7 +45,9 @@ export function MessageTypeVideo({
 }: Props): React.ReactElement | null {
   const [open, setOpen] = useState(false);
   const [thumb, setThumb] = useState<string | null>(
-    message.attachmentPreviewUrl || null,
+    isImagePreviewUri(message.attachmentPreviewUrl)
+      ? message.attachmentPreviewUrl || null
+      : null,
   );
   const [natural, setNatural] = useState<{
     width: number;
@@ -59,7 +62,6 @@ export function MessageTypeVideo({
   const url = attachmentUrl(message);
   const name = attachmentName(message);
   const Video = getVideoComponent();
-  const createThumbnail = getCreateThumbnail();
   const size = fitMediaSize(natural?.width, natural?.height);
 
   useEffect(() => {
@@ -69,40 +71,32 @@ export function MessageTypeVideo({
     }
 
     const applyNatural = (width?: number, height?: number) => {
-      if (cancelled || natural || !width || !height) {
+      if (cancelled || !width || !height) {
         return;
       }
-      setNatural({ width, height });
+      setNatural((prev) => prev || { width, height });
     };
 
     (async () => {
-      if (!thumb && createThumbnail) {
-        try {
-          const result = await createThumbnail({
-            url,
-            timeStamp: 1000,
-            format: 'jpeg',
-          });
-          if (cancelled) {
-            return;
+      if (!thumb) {
+        if (isImagePreviewUri(url) || !url) {
+          return;
+        }
+        const result = await createVideoThumbnail(url);
+        if (cancelled) {
+          return;
+        }
+        if (result?.uri) {
+          setThumb(result.uri);
+          applyNatural(result.width, result.height);
+          if (!result.width || !result.height) {
+            Image.getSize(
+              result.uri,
+              (w, h) => applyNatural(w, h),
+              () => undefined,
+            );
           }
-          if (result?.path) {
-            const path = result.path.startsWith('file://')
-              ? result.path
-              : `file://${result.path}`;
-            setThumb(path);
-            applyNatural(result.width, result.height);
-            if (!result.width || !result.height) {
-              Image.getSize(
-                path,
-                (w, h) => applyNatural(w, h),
-                () => undefined,
-              );
-            }
-            return;
-          }
-        } catch {
-          // Preview generation is best-effort.
+          return;
         }
       }
 
@@ -110,11 +104,7 @@ export function MessageTypeVideo({
         Image.getSize(
           thumb,
           (w, h) => applyNatural(w, h),
-          () => {
-            if (!cancelled && !natural) {
-              setNatural({ width: MEDIA_MAX_SIDE, height: MEDIA_MAX_SIDE });
-            }
-          },
+          () => undefined,
         );
       }
     })();
@@ -122,7 +112,7 @@ export function MessageTypeVideo({
     return () => {
       cancelled = true;
     };
-  }, [url, thumb, createThumbnail, natural]);
+  }, [url, thumb, natural]);
 
   if (!url) {
     return null;
@@ -151,6 +141,23 @@ export function MessageTypeVideo({
 
   return (
     <>
+      {!natural && Video && url ? (
+        <Video
+          source={{ uri: url }}
+          style={styles.sizeProbe}
+          paused
+          muted
+          onLoad={(e: {
+            naturalSize?: { width?: number; height?: number };
+          }) => {
+            const w = e.naturalSize?.width;
+            const h = e.naturalSize?.height;
+            if (w && h) {
+              setNatural({ width: w, height: h });
+            }
+          }}
+        />
+      ) : null}
       <TouchableOpacity
         style={[
           styles.buttonImageBox,
@@ -318,6 +325,12 @@ const styles = StyleSheet.create({
     left: 0,
     bottom: 0,
     right: 0,
+  },
+  sizeProbe: {
+    width: 0,
+    height: 0,
+    opacity: 0,
+    position: 'absolute',
   },
   missingPlayer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   missingPlayerText: {

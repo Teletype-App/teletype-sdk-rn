@@ -28,8 +28,9 @@ export interface TeletypeProviderProps extends TeletypeConfig {
  *   teletypeExternalId="YOUR_EXTERNAL_ID"
  *   title="Онлайн чат"
  *   primaryColor="#0084ff"
+ *   chatBackground="white"
  * >
- *   <ChatWidget />
+ *   <Root />
  * </TeletypeProvider>
  * ```
  */
@@ -43,18 +44,37 @@ export function TeletypeProvider(
     autoInit = true,
     title,
     primaryColor,
-    ...config
+    chatBackground,
+    teletypeExternalId,
+    mode,
+    environment,
+    storage,
+    soundEnabled,
+    socketOptions,
+    locale,
+    translations,
+    device,
   } = props;
+
+  const resolvedTitle = typeof title === 'string' ? title : undefined;
 
   const clientRef = useRef<TeletypeClient | null>(null);
   if (!clientRef.current) {
-    clientRef.current =
-      externalClient ??
-      new TeletypeClient({
-        ...(config as TeletypeConfig),
-        title,
-        primaryColor,
-      });
+    const config: TeletypeConfig = {
+      teletypeExternalId,
+      mode,
+      environment,
+      storage,
+      soundEnabled,
+      socketOptions,
+      locale,
+      translations,
+      device,
+      title: resolvedTitle,
+      primaryColor,
+      chatBackground,
+    };
+    clientRef.current = externalClient ?? new TeletypeClient(config);
   }
 
   const client = clientRef.current;
@@ -75,16 +95,22 @@ export function TeletypeProvider(
   }, []);
 
   useEffect(() => {
-    if (title !== undefined) {
-      client.setTitle(title);
+    if (resolvedTitle !== undefined) {
+      client.setTitle(resolvedTitle);
     }
-  }, [client, title]);
+  }, [client, resolvedTitle]);
 
   useEffect(() => {
     if (primaryColor !== undefined) {
       client.setPrimaryColor(primaryColor);
     }
   }, [client, primaryColor]);
+
+  useEffect(() => {
+    if (chatBackground !== undefined) {
+      client.setChatBackground(chatBackground);
+    }
+  }, [client, chatBackground]);
 
   const value = useMemo(() => client, [client]);
 

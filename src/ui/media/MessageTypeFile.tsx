@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Platform,
   StyleSheet,
@@ -11,13 +10,13 @@ import {
 import { Message } from '../../types/message';
 import { TeletypeTheme } from '../theme';
 import { TeletypeStrings } from '../../i18n/strings';
-import { Icon, Icons } from '../icons';
 import {
   canDownloadLocally,
   ensureCachedFile,
   getCachedFilePath,
   openWithSystemApp,
 } from './download';
+import { FileIcon } from './FileIcon';
 import { formatBytes } from '../../core/utils';
 import { attachmentName, attachmentUrl, getExt } from './fileUtils';
 
@@ -112,27 +111,17 @@ export function MessageTypeFile({
     [formatBytes(message.size, 2, strings), ext].filter(Boolean).join(' ') ||
     strings.attachmentFallback;
 
-  const renderFileIcon = () => {
-    if (loading) {
-      return <ActivityIndicator size={24} color={iconColor} />;
-    }
-    return (
-      <Icon
-        name={needDownload ? 'arrowdown' : 'file'}
-        type={needDownload ? Icons.AntDesign : Icons.MaterialCommunityIcons}
-        size={24}
-        color={iconColor}
-        fallback={needDownload ? '↓' : '▤'}
-      />
-    );
-  };
-
   return (
     <View style={styles.fileContainer}>
       <View style={styles.fileContainerBox}>
         <TouchableOpacity style={styles.iconBox} onPress={open} disabled={loading}>
           <View style={[styles.fileImage, { backgroundColor: iconBg }]}>
-            {renderFileIcon()}
+            <FileIcon
+              needDownload={needDownload}
+              loading={loading}
+              color={iconColor}
+              size={24}
+            />
           </View>
         </TouchableOpacity>
 
@@ -160,8 +149,6 @@ const styles = StyleSheet.create({
   fileContainer: {
     padding: 10,
     position: 'relative',
-    flex: 1,
-    width: '100%',
     minWidth: 200,
     maxWidth: 280,
   },

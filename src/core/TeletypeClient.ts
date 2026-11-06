@@ -20,6 +20,7 @@ import {
   TeletypeEventName,
 } from '../types/events';
 import { Message, ConversationRating } from '../types/message';
+import { LocalFile, UploadedAttachment } from '../types/file';
 import { Operator } from '../types/operator';
 import {
   ChannelMessenger,
@@ -31,8 +32,16 @@ import { SocketClient } from './SocketClient';
 import { Storage, KeyValueStore } from './Storage';
 import { TypedEventEmitter } from './EventEmitter';
 import { camelKeys, guid, isEmojiOnly, snakeKeys } from './utils';
+import {
+  isAllowedUploadFile,
+  messageTypeFromFile,
+} from '../config/fileTypes';
 import { TeletypeStrings } from '../i18n/strings';
 import { TeletypeTranslations, resolveStrings } from '../i18n/locale';
+import {
+  ChatBackground,
+  DEFAULT_CHAT_BACKGROUND,
+} from '../types/appearance';
 
 export interface TeletypeConfig {
   /**
@@ -59,11 +68,9 @@ export interface TeletypeConfig {
   /** Play a sound on incoming messages (host app decides how). Default false. */
   soundEnabled?: boolean;
   /**
-   * Extra `socket.io-client` (v2) options, merged over the SDK defaults. The
-   * SDK defaults to `{ transports: ['websocket'], forceNew: true }` — forcing
-   * the websocket transport is strongly recommended on mobile, where the
-   * xhr-polling fallback is unreliable on flaky/cellular networks. Pass your
-   * own values here to override (e.g. `reconnectionAttempts`, `query`).
+   * Extra `socket.io-client` (v2) options, merged over the SDK defaults
+   * (`forceNew`, `autoConnect: false`). The web widget does not pin the
+   * transport — polling is allowed as a fallback.
    */
   socketOptions?: Record<string, unknown>;
   /**
@@ -95,6 +102,11 @@ export interface TeletypeConfig {
    */
   primaryColor?: string;
   /**
+   * Chat transcript background. `'white'` (default) is a solid fill;
+   * `'doodle'`, `'circles'` and `'scribbles'` tile a built-in pattern.
+   */
+  chatBackground?: ChatBackground;
+  /**
    * Static device metadata reported to the backend with person data.
    * (os / device / browser). All optional.
    */
@@ -120,6 +132,8 @@ export interface TeletypeState {
    * Provider `primaryColor` → channel `backgroundColor` → `#0084ff`.
    */
   primaryColor: string;
+  /** Chat transcript background (`'white'` or a built-in pattern). */
+  chatBackground: ChatBackground;
   /** Active two-letter UI language code (e.g. `'ru'`). */
   locale: string;
   /** Resolved UI string table for the active language. */
@@ -140,6 +154,7 @@ export class TeletypeClient {
   private _strings: TeletypeStrings;
   private _title: string;
   private _primaryColor: string | null;
+  private _chatBackground: ChatBackground;
   private translations?: TeletypeTranslations;
 
   private api: ApiClient;
@@ -174,6 +189,8 @@ export class TeletypeClient {
   private receivedTimeouts: Record<string, ReturnType<typeof setTimeout>> = {};
   private operatorTypingTimeout: ReturnType<typeof setTimeout> | null = null;
   private initialized = false;
+  /** Socket listeners must be bound once; re-binding after `connect` drops `connect`. */
+  private listenersBound = false;
 
   constructor(config: TeletypeConfig) {
     this.externalId = config.teletypeExternalId;
@@ -188,18 +205,23 @@ export class TeletypeClient {
     const resolved = resolveStrings(config.locale, this.translations);
     this._locale = resolved.language;
     this._strings = resolved.strings;
-    this._title = config.title ?? DEFAULT_CHAT_TITLE;
+    this._title =
+      typeof config.title === 'string' ? config.title : DEFAULT_CHAT_TITLE;
     this._primaryColor = config.primaryColor ?? null;
+    this._chatBackground = config.chatBackground ?? DEFAULT_CHAT_BACKGROUND;
 
     this.api = new ApiClient(this.env, this.externalId);
     this.socket = new SocketClient(
       this.env.wsUrl,
       {
-        // Force websocket on mobile; polling fallback is unreliable there.
-        transports: ['websocket'],
+        // Same as the web widget (`forceNew: true` only). Do not pin
+        // `transports: ['websocket']` — on Android emulator / some networks
+        // the websocket handshake never completes and messages stay on
+        // "sending". Polling is the fallback the widget uses.
+        forceNew: true,
+        autoConnect: false,
         ...(config.socketOptions || {}),
       },
-      // In dev mode, log every websocket event (name + payload) to the console.
       this.env.mode === 'dev',
     );
     this.storage = new Storage(this.externalId, config.storage);
@@ -240,6 +262,11 @@ export class TeletypeClient {
     );
   }
 
+  /** Chat transcript background (`'white'` or a built-in pattern). */
+  get chatBackground(): ChatBackground {
+    return this._chatBackground;
+  }
+
   get state(): TeletypeState {
     return {
       ready: this._ready,
@@ -254,6 +281,7 @@ export class TeletypeClient {
       draft: this._draft,
       title: this._title,
       primaryColor: this.primaryColor,
+      chatBackground: this._chatBackground,
       locale: this._locale,
       strings: this._strings,
     };
@@ -280,6 +308,9 @@ export class TeletypeClient {
 
   /** Update the chat header title at runtime. */
   setTitle(title: string): void {
+    if (typeof title !== 'string') {
+      return;
+    }
     this._title = title;
     this.emitter.emit('appearanceChanged', undefined);
   }
@@ -290,6 +321,12 @@ export class TeletypeClient {
    */
   setPrimaryColor(color: string | null): void {
     this._primaryColor = color;
+    this.emitter.emit('appearanceChanged', undefined);
+  }
+
+  /** Update the chat transcript background at runtime. */
+  setChatBackground(background: ChatBackground): void {
+    this._chatBackground = background;
     this.emitter.emit('appearanceChanged', undefined);
   }
 
@@ -378,16 +415,18 @@ export class TeletypeClient {
       return cached;
     }
     const fresh = await this.api.getConfig();
-    this.storage.set(STORAGE_KEYS.config, fresh);
-    this.storage.set(STORAGE_KEYS.configSaveTime, Date.now());
+    if (isUsableConfigResponse(fresh)) {
+      this.storage.set(STORAGE_KEYS.config, fresh);
+      this.storage.set(STORAGE_KEYS.configSaveTime, Date.now());
+    }
     return fresh;
   }
 
   private applyConfig(response: ConfigResponse): void {
-    const data = response?.data;
-    if (!data || Array.isArray(data)) {
+    if (!isUsableConfigResponse(response)) {
       return;
     }
+    const data = response.data;
     this._config = data;
     this._operators = (data.operators || []).filter(
       (op) => op && op.name && op.name.trim() !== '',
@@ -416,11 +455,46 @@ export class TeletypeClient {
 
   /** Open the socket (if needed) and bind all listeners. */
   ensureConnected(): void {
-    if (!this.socket.disconnected) {
-      return;
+    // Create the socket first (autoConnect is false) so we can attach
+    // listeners before `connect()` — otherwise the `connect` event is missed
+    // and queued messages never leave "sending".
+    this.socket.ensureCreated();
+    if (!this.listenersBound) {
+      this.bindSocket();
+      this.listenersBound = true;
     }
     this.socket.connect();
-    this.bindSocket();
+  }
+
+  /**
+   * Open the socket and resolve once it is connected. Used by host apps to
+   * verify that a channel id is reachable before showing the chat UI.
+   */
+  waitUntilConnected(timeoutMs = 15000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this._connection === 'connected') {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error('Socket connect timeout'));
+      }, timeoutMs);
+      const off = this.on('connectionChanged', (state) => {
+        if (state !== 'connected') {
+          return;
+        }
+        clearTimeout(timer);
+        off();
+        resolve();
+      });
+      this.ensureConnected();
+      if (this._connection === 'connected') {
+        clearTimeout(timer);
+        off();
+        resolve();
+      }
+    });
   }
 
   private bindSocket(): void {
@@ -517,7 +591,7 @@ export class TeletypeClient {
           WsEvent.AUTH_PERSON,
           snakeKeys({ widgetId: this.externalId, id: this.personId }),
         );
-      }, 500);
+      }, 1000);
     }
   }
 
@@ -550,9 +624,12 @@ export class TeletypeClient {
 
   private handleReceived(data: Record<string, unknown>): void {
     this.banned = Boolean(data.banned);
-    const tempId = data.temp_id as string;
+    const tempId = (data.temp_id ?? data.tempId) as string | undefined;
     const newId = data.id as string;
-    const appealId = data.appeal_id as string | undefined;
+    const appealId = (data.appeal_id ?? data.appealId) as string | undefined;
+    if (!tempId) {
+      return;
+    }
 
     if (this.receivedTimeouts[tempId]) {
       clearTimeout(this.receivedTimeouts[tempId]);
@@ -615,15 +692,12 @@ export class TeletypeClient {
     this.handleSendMessage(message);
   }
 
-  /** Send an already-uploaded attachment (see `uploadFile`). */
-  sendAttachment(attachment: {
-    attachment: string;
-    attachmentId: string;
-    attachmentUrl: string;
-    type?: Message['messageType'];
-    width?: number;
-    height?: number;
-  }): void {
+  /**
+   * Send an already-uploaded attachment. The local preview (created by
+   * `uploadFile`) is already in the message list, so this only emits the
+   * socket event — same as the web widget's `sendAttachment` (`save = false`).
+   */
+  sendAttachment(attachment: UploadedAttachment): void {
     const message: Message = {
       isOwn: true,
       date: { date: new Date().toISOString(), timezone: 'UTC' },
@@ -632,6 +706,7 @@ export class TeletypeClient {
       attachmentUrl: attachment.attachmentUrl,
       width: attachment.width,
       height: attachment.height,
+      size: attachment.size,
       messageType: attachment.type || 'attachment',
       tempId: guid(),
     };
@@ -639,18 +714,21 @@ export class TeletypeClient {
   }
 
   /**
-   * Upload a local file then send it as an attachment. `file` follows the
-   * React Native fetch convention: `{ uri, name, type }`, plus an optional
-   * `size` (bytes) used to enforce the same 20 MB limit as the web widget.
+   * Upload a local file without sending it as a chat message.
+   * Matches the web widget: `POST widget-attachment/<channel_id>` with
+   * multipart `file` + `externalId`.
    */
-  async uploadFile(file: {
-    uri: string;
-    name: string;
-    type: string;
-    size?: number;
-  }): Promise<void> {
+  async uploadAttachment(
+    file: LocalFile,
+    onProgress?: (progress: number) => void,
+  ): Promise<UploadedAttachment> {
     if (typeof file.size === 'number' && file.size > MAX_UPLOAD_BYTES) {
       const error = new Error('fileSizeError');
+      this.emitter.emit('error', error);
+      throw error;
+    }
+    if (!isAllowedUploadFile(file)) {
+      const error = new Error('fileFormatNotAllowed');
       this.emitter.emit('error', error);
       throw error;
     }
@@ -663,7 +741,7 @@ export class TeletypeClient {
           name: file.name,
           type: file.type,
         },
-        this._appealId || undefined,
+        onProgress,
       );
     } catch (e) {
       const error = e instanceof Error ? e : new Error('uploadFailed');
@@ -682,21 +760,113 @@ export class TeletypeClient {
       throw error;
     }
 
-    // The backend returns the hosted file URL in `data.attachment` and the id
-    // in `data.attachment_id` (camel-cased to `attachmentId`). The visible file
-    // name stays the original picked name.
-    this.sendAttachment({
+    const attachmentId =
+      (data.attachmentId as string) ||
+      (data.attachment_id as string) ||
+      '';
+    const attachmentUrl =
+      (data.attachment as string) ||
+      (data.attachmentUrl as string) ||
+      file.uri;
+
+    return {
       attachment: file.name,
-      attachmentId: (data.attachmentId as string) || '',
-      attachmentUrl: (data.attachment as string) || file.uri,
-      type: file.type.startsWith('image')
-        ? 'image'
-        : file.type.startsWith('audio')
-          ? 'audio'
-          : file.type.startsWith('video')
-            ? 'video'
-            : 'attachment',
-    });
+      attachmentId,
+      attachmentUrl,
+      type: messageTypeFromFile(file),
+      size: file.size,
+      width: file.width,
+      height: file.height,
+    };
+  }
+
+  /**
+   * Widget-style send: insert a local preview, upload the file, then emit the
+   * attachment over the socket. Progress is written onto the preview message.
+   */
+  async uploadFile(file: LocalFile): Promise<void> {
+    if (typeof file.size === 'number' && file.size > MAX_UPLOAD_BYTES) {
+      this.addAttachmentError(file, 'fileSizeError');
+      const error = new Error('fileSizeError');
+      this.emitter.emit('error', error);
+      throw error;
+    }
+    if (!isAllowedUploadFile(file)) {
+      this.addAttachmentError(file, 'fileFormatNotAllowed');
+      const error = new Error('fileFormatNotAllowed');
+      this.emitter.emit('error', error);
+      throw error;
+    }
+
+    const localId = `${file.name}_${file.size ?? 0}_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 11)}`;
+    const preview: Message = {
+      message: '',
+      messageType: messageTypeFromFile(file),
+      progress: 0,
+      attachmentId: localId,
+      tempId: guid(),
+      isOwn: true,
+      attachment: file.name,
+      attachmentPreviewUrl:
+        file.previewUri ||
+        (messageTypeFromFile(file) === 'image' ? file.uri : undefined),
+      attachmentUrl: file.uri,
+      date: { date: new Date().toISOString(), timezone: 'UTC' },
+      size: file.size,
+      width: file.width,
+      height: file.height,
+      status: 'sending',
+    };
+    this._messages = [...this._messages, preview];
+    this.setMessages(this._messages);
+
+    try {
+      const uploaded = await this.uploadAttachment(file, (pct) => {
+        this.patchAttachment(localId, { progress: pct });
+      });
+      this.patchAttachment(localId, {
+        attachmentId: uploaded.attachmentId,
+        attachmentUrl: uploaded.attachmentUrl,
+        progress: 100,
+      });
+      this.sendAttachment(uploaded);
+    } catch (e) {
+      const code = e instanceof Error ? e.message : 'uploadFailed';
+      this.patchAttachment(localId, {
+        errorMessage: code,
+        progress: 100,
+        status: 'failed',
+      });
+      throw e;
+    }
+  }
+
+  private addAttachmentError(file: LocalFile, errorMessage: string): void {
+    const message: Message = {
+      message: '',
+      messageType: messageTypeFromFile(file),
+      progress: 100,
+      attachmentId: `${file.name}${file.size ?? 0}`,
+      tempId: guid(),
+      isOwn: true,
+      attachment: file.name,
+      attachmentPreviewUrl: file.uri,
+      date: { date: new Date().toISOString(), timezone: 'UTC' },
+      size: file.size,
+      errorMessage,
+      status: 'failed',
+    };
+    this._messages = [...this._messages, message];
+    this.setMessages(this._messages);
+  }
+
+  private patchAttachment(attachmentId: string, patch: Partial<Message>): void {
+    this._messages = this._messages.map((m) =>
+      m.attachmentId === attachmentId ? { ...m, ...patch } : m,
+    );
+    this.setMessages(this._messages);
   }
 
   private handleSendMessage(message: Message, save = true): void {
@@ -708,25 +878,54 @@ export class TeletypeClient {
     }
 
     message.status = this.banned ? 'sent' : 'sending';
-    message.tempId = message.tempId || guid();
+    // Web widget always mints a fresh id here (including retries).
+    message.tempId = guid();
 
     const userMessages = this._messages.filter(
-      (m) => m.isOwn && !m.errorMessage && !m.attachment,
+      (m) =>
+        m.isOwn &&
+        !m.errorMessage &&
+        !m.attachment &&
+        m.status !== 'failed' &&
+        m.tempId !== message.tempId,
     );
     const attachmentMessages = this._messages.filter(
-      (m) => m.isOwn && !m.errorMessage && m.attachment,
+      (m) =>
+        m.isOwn &&
+        !m.errorMessage &&
+        m.attachment &&
+        m.status !== 'failed' &&
+        m.tempId !== message.tempId,
     );
     const last = this._messages[this._messages.length - 1];
     const hasRating = last && last.formType === 'rating';
 
     const isFirstMessage =
       !this._appealId &&
-      (( !userMessages.length && !attachmentMessages.length) || hasRating);
+      ((!userMessages.length && !attachmentMessages.length) ||
+        hasRating ||
+        // Web widget: the first outgoing file still counts as the dialog-opening
+        // message even when a local preview of the same attachment is already
+        // sitting in `_messages`.
+        (!!message.attachment &&
+          attachmentMessages.length > 0 &&
+          message.attachment === attachmentMessages[0].attachment));
+
+    if (message.messageType && message.messageType !== 'text' && message.attachmentId) {
+      const previewIdx = this._messages.findIndex(
+        (m) => m.attachmentId === message.attachmentId,
+      );
+      if (previewIdx > -1) {
+        this._messages = this._messages.map((m, i) =>
+          i === previewIdx ? { ...m, tempId: message.tempId } : m,
+        );
+      }
+    }
 
     if (save) {
       this._messages = [...this._messages, message];
-      this.setMessages(this._messages);
     }
+    this.setMessages(this._messages);
     this.pushPending(message);
 
     if (isFirstMessage || this._appealId) {
@@ -739,47 +938,66 @@ export class TeletypeClient {
       this.emitter.emit('dialogStarted', message);
     }
     this.emitter.emit('messageSent', message);
-
-    if (!this.banned) {
-      clearTimeout(this.receivedTimeouts[message.tempId]);
-      this.receivedTimeouts[message.tempId] = setTimeout(() => {
-        void this.api
-          .reportError({
-            error: 'Did not receive "received" event from websockets',
-            widgetId: this.externalId,
-            appealId: this._appealId,
-            personId: this.personId,
-          })
-          .catch(() => undefined);
-        this._messages = this._messages.map((m) =>
-          m.tempId === message.tempId ? { ...m, status: 'failed' } : m,
-        );
-        this.setMessages(this._messages);
-      }, RECEIVED_ACK_TIMEOUT);
-    }
   }
 
   private emitMessage(message: Message): void {
-    if (this.socket.disconnected) {
-      this.ensureConnected();
-    }
+    this.ensureConnected();
+    const personId =
+      this.personId || this.storage.get<string>(STORAGE_KEYS.personId, '') || '';
+    // Same payload as the web widget `emitMessage`: empty strings, not `null`,
+    // for a missing person/appeal. socket.io v2 buffers the packet while the
+    // handshake is in flight — do not wait for `connected` or the send is
+    // dropped if `connect` is missed (widget shows the composer ~700ms after
+    // connect, so it rarely hits this; the SDK can send immediately).
     this.socket.emit(
       WsEvent.MESSAGE_FROM_PERSON,
       snakeKeys({
         external_id: this.externalId,
         message,
-        person_id: this.personId || undefined,
-        appeal_id: this._appealId || undefined,
+        person_id: personId,
+        appeal_id: this._appealId || '',
       }),
     );
+    this.armReceivedTimeout(message);
+  }
+
+  private armReceivedTimeout(message: Message): void {
+    if (this.banned || !message.tempId) {
+      return;
+    }
+    clearTimeout(this.receivedTimeouts[message.tempId]);
+    this.receivedTimeouts[message.tempId] = setTimeout(() => {
+      void this.api
+        .reportError({
+          error: 'Did not receive "received" event from websockets',
+          widgetId: this.externalId,
+          appealId: this._appealId,
+          personId: this.personId,
+        })
+        .catch(() => undefined);
+      this._messages = this._messages.map((m) =>
+        m.tempId === message.tempId ? { ...m, status: 'failed' } : m,
+      );
+      this.setMessages(this._messages);
+    }, RECEIVED_ACK_TIMEOUT);
   }
 
   /** Retry a message that previously failed. */
   retryMessage(tempId: string): void {
     const message = this._messages.find((m) => m.tempId === tempId);
-    if (message) {
-      this.handleSendMessage(message, false);
+    if (!message) {
+      return;
     }
+    const next: Message = {
+      ...message,
+      status: 'sending',
+      errorMessage: undefined,
+    };
+    this._messages = this._messages.map((m) =>
+      m.tempId === tempId ? next : m,
+    );
+    this.setMessages(this._messages);
+    this.handleSendMessage(next, false);
   }
 
   // --------------------------------------------------------------------------
@@ -1077,7 +1295,21 @@ export class TeletypeClient {
     this.socket.disconnect();
     this.emitter.removeAllListeners();
     this.initialized = false;
+    this.listenersBound = false;
   }
+}
+
+function isUsableConfigResponse(
+  response: ConfigResponse | null | undefined,
+): response is ConfigResponse {
+  if (!response || response.success === false) {
+    return false;
+  }
+  const data = response.data;
+  if (!data || Array.isArray(data) || typeof data !== 'object') {
+    return false;
+  }
+  return Boolean(data.projectId || data.name);
 }
 
 function uniqueBy<T>(arr: T[], keyFn: (item: T) => string): T[] {

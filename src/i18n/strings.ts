@@ -83,6 +83,27 @@ export interface TeletypeStrings {
   Zb: string;
   /** File size unit: yottabytes. */
   Yb: string;
+
+  /** Confirmation modal: send the file. */
+  send: string;
+  /** Confirmation modal: dismiss without sending. */
+  cancel: string;
+  /** Confirmation modal title when the attachment is an image. */
+  sendImage: string;
+  /** Confirmation modal title when the attachment is a video. */
+  sendVideo: string;
+  /** Confirmation modal title when the attachment is audio. */
+  sendAudio: string;
+  /** Confirmation modal title when the attachment is a generic file. */
+  sendFile: string;
+  /** Confirmation modal: upload in progress (shown on the Send button). */
+  uploading: string;
+  /** Picked file is larger than 20 MB. */
+  fileSizeError: string;
+  /** Picked file type is not on the widget allow-list. */
+  fileFormatNotAllowed: string;
+  /** Upload HTTP request failed. */
+  uploadFailed: string;
 }
 
 /** English strings. Also the fallback for any missing key in other locales. */

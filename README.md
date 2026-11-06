@@ -1,4 +1,4 @@
-# teletype-react-native-sdk
+# teletype-sdk-rn
 
 Native **React Native SDK** for embedding the [Teletype](https://teletype.app) online chat into iOS and Android apps.
 
@@ -11,7 +11,7 @@ It reuses the exact same backend protocol as the Teletype **web widget** (`/widg
 ## Features
 
 - 💬 Real-time messaging over `socket.io` (bidirectional, typing indicators, seen/received receipts)
-- 🧩 Drop-in `<ChatWidget />` (floating button + modal) **or** full-screen `<ChatScreen />`
+- 🧩 Drop-in `<ChatWidget />` (floating button) **and** `<ChatScreen />` as a regular host / navigation screen
 - 🪝 Headless core (`TeletypeClient`) + React hooks for fully custom UIs
 - 🔁 Message history, offline pending queue, auto-reconnect
 - ⭐ Operator rating form, service/bot messages, rich attachments (image zoom, video with generated preview, in-bubble audio player, file open/download)
@@ -24,7 +24,7 @@ It reuses the exact same backend protocol as the Teletype **web widget** (`/widg
 ## Installation
 
 ```bash
-npm install teletype-react-native-sdk socket.io-client@^2
+npm install teletype-sdk-rn socket.io-client@^2
 # recommended for cross-launch session persistence:
 npm install @react-native-async-storage/async-storage
 ```
@@ -38,7 +38,29 @@ npm install @react-native-async-storage/async-storage
 ## Quick start
 
 ```tsx
-import { TeletypeProvider, ChatWidget } from 'teletype-react-native-sdk';
+import {
+  TeletypeProvider,
+  ChatWidget,
+  ChatScreen,
+  useTeletype,
+  useTeletypeState,
+} from 'teletype-sdk-rn';
+
+function Root() {
+  const client = useTeletype();
+  const { opened } = useTeletypeState();
+
+  if (opened) {
+    return <ChatScreen onClose={() => client.hide()} />;
+  }
+
+  return (
+    <>
+      <YourApp />
+      <ChatWidget />
+    </>
+  );
+}
 
 export default function App() {
   return (
@@ -47,8 +69,7 @@ export default function App() {
       title="Онлайн чат"
       primaryColor="#0084ff"
     >
-      <YourApp />
-      <ChatWidget />
+      <Root />
     </TeletypeProvider>
   );
 }
@@ -61,7 +82,7 @@ export default function App() {
 ## Components
 
 ### `<ChatWidget />`
-All-in-one: a floating launcher button with an unread badge plus a modal chat surface, wired to the client's open/close state. Closest equivalent to dropping the `<script>` snippet on a website.
+Floating launcher button with an unread badge. It does **not** present the chat — mount `<ChatScreen />` as a regular screen when `state.opened` is true (or when `openChanged` fires). That way document pickers and other native sheets are not blocked by a React Native `<Modal>`.
 
 ```tsx
 <ChatWidget
@@ -71,13 +92,12 @@ All-in-one: a floating launcher button with an unread badge plus a modal chat su
     scale: 100, // 70 | 80 | 90 | 100
     bottom: 32,
   }}
-  screenProps={{ placeholder: 'Ask us anything…' }}
 />
 ```
 
 #### Sending files
 
-The composer shows a 📎 button. Because file picking needs a native module (and apps differ on whether they want documents, the photo library, or the camera), the SDK stays picker-agnostic: pass an `onAttachmentPress` handler that picks a file and calls `client.uploadFile(...)`. The SDK handles the multipart upload and delivery.
+The composer shows a 📎 button. Because file picking needs a native module (and apps differ on whether they want documents, the photo library, or the camera), the SDK stays picker-agnostic: pass an `onAttachmentPress` handler that **picks a file and returns it**. The SDK then shows a send-confirmation modal with a **local preview** (Cancel / Send). After Send, the file is uploaded and delivered the same way as the web widget: a local preview appears in the chat, the file is posted to `widget-attachment/<channel_id>`, then the attachment is sent over the socket.
 
 The example below uses [`@react-native-documents/picker`](https://github.com/react-native-documents/document-picker), a plain React Native library (no Expo dependency), but any picker works:
 
@@ -88,22 +108,22 @@ const handleAttachment = async () => {
   try {
     const [file] = await pick();
     if (!file) return;
-    await client.uploadFile({
+    return {
       uri: file.uri,
       name: file.name ?? 'file',
       type: file.type ?? 'application/octet-stream',
       size: file.size ?? undefined,
-    });
+    };
   } catch (e) {
     if (isErrorWithCode(e) && e.code === errorCodes.OPERATION_CANCELED) return; // user dismissed
     throw e;
   }
 };
 
-<ChatWidget screenProps={{ onAttachmentPress: handleAttachment }} />
+<ChatScreen onAttachmentPress={handleAttachment} />
 ```
 
-Without an `onAttachmentPress` handler the 📎 button is shown but disabled. `uploadFile` throws (and emits an `error` event) for files larger than 20 MB.
+Without an `onAttachmentPress` handler the 📎 button is shown but disabled. Files larger than 20 MB, or types the web widget does not allow, are rejected (`fileSizeError` / `fileFormatNotAllowed`). To send a file programmatically without the confirmation modal, call `client.uploadFile(...)`.
 
 #### Viewing media attachments
 
@@ -138,13 +158,58 @@ Without a given library the matching feature degrades gracefully (e.g. image sti
 - **Files / text** — tap the icon or name to download (first time) and open with a system app that can handle the type (text editors, PDF viewers, …).
 
 ### `<ChatScreen />`
-The full chat surface (header + messages + composer). Embed it in your own screen or navigator instead of the modal.
+The full chat surface (header + messages + composer). Open it as a **regular host / navigation screen** — not inside a React Native `<Modal>`.
 
 ```tsx
-import { ChatScreen } from 'teletype-react-native-sdk';
+import { ChatScreen, useTeletype, useTeletypeState } from 'teletype-sdk-rn';
 
-function SupportScreen() {
-  return <ChatScreen showClose={false} placeholder="Message…" />;
+function Root() {
+  const client = useTeletype();
+  const { opened } = useTeletypeState();
+  if (opened) {
+    return (
+      <ChatScreen
+        placeholder="Message…"
+        onAttachmentPress={handleAttachment}
+        onClose={() => client.hide()}
+      />
+    );
+  }
+  return (
+    <>
+      <Home />
+      <ChatWidget />
+    </>
+  );
+}
+```
+
+With React Navigation, push the screen on `openChanged` and call `client.hide()` when leaving:
+
+```tsx
+function Home({ navigation }) {
+  useTeletypeEvent('openChanged', (opened) => {
+    if (opened) navigation.navigate('Chat');
+  });
+  return (
+    <>
+      <HomeContent />
+      <ChatWidget />
+    </>
+  );
+}
+
+function ChatRoute({ navigation }) {
+  const client = useTeletype();
+  return (
+    <ChatScreen
+      onAttachmentPress={handleAttachment}
+      onClose={() => {
+        client.hide();
+        navigation.goBack();
+      }}
+    />
+  );
 }
 ```
 
@@ -175,14 +240,16 @@ Access the client via the `useTeletype()` hook or the `onReady` callback on the 
 | `client.setPersonData(info)` | `_teletypeWidget.setPersonData()` | Attach visitor data |
 | `client.greetingMessages([...])` | `_teletypeWidget.greetingMessages()` | Inject bot greeting messages |
 | `client.sendMessage(text)` | — | Send a message programmatically |
-| `client.uploadFile({uri,name,type,size?})` | — | Upload + send an attachment (rejects files over 20 MB) |
+| `client.uploadAttachment({uri,name,type,size?})` | — | Upload a file without sending it (returns `{ attachment, attachmentId, attachmentUrl, type }`) |
+| `client.sendAttachment(...)` | — | Send an already-uploaded attachment |
+| `client.uploadFile({uri,name,type,size?})` | — | Upload + send an attachment, skipping the confirmation modal (rejects files over 20 MB / disallowed types) |
 | `client.rateAppeal(value, tempId?)` | — | Submit a conversation rating |
 | `client.markSeen()` | — | Mark inbound messages as seen |
 | `client.setTitle(text)` | — | Change the chat header title |
 | `client.setPrimaryColor(color)` | — | Change the shared button + header color |
 
 ```tsx
-import { useTeletype } from 'teletype-react-native-sdk';
+import { useTeletype } from 'teletype-sdk-rn';
 
 function OpenChatButton() {
   const client = useTeletype();
@@ -243,7 +310,7 @@ useTeletypeEvent('messageReceived', (msg) => {
 ### Custom UI example
 
 ```tsx
-import { useMessages, useTeletypeActions } from 'teletype-react-native-sdk';
+import { useMessages, useTeletypeActions } from 'teletype-sdk-rn';
 
 function MyChat() {
   const messages = useMessages();
@@ -259,7 +326,7 @@ function MyChat() {
 The engine is framework-agnostic — handy for push-notification handling in the background:
 
 ```ts
-import { TeletypeClient } from 'teletype-react-native-sdk';
+import { TeletypeClient } from 'teletype-sdk-rn';
 
 const client = new TeletypeClient({ teletypeExternalId: 'YOUR_EXTERNAL_ID' });
 await client.init();
@@ -281,7 +348,7 @@ The launcher button and chat header share `primaryColor` on `<TeletypeProvider>`
   title="Онлайн чат"
   primaryColor="#0084ff"
 >
-  <ChatWidget
+  <ChatScreen
     theme={{
       backgroundColor: '#f8fafc',
       bubbleRadius: 20,
@@ -385,7 +452,7 @@ back to English, so partial tables are safe. Keep it in its own file:
 
 ```ts
 // localization.ts
-import type { TeletypeTranslations } from 'teletype-react-native-sdk';
+import type { TeletypeTranslations } from 'teletype-sdk-rn';
 
 export const translations: TeletypeTranslations = {
   ru: { statusOffline: 'Мы онлайн — ответим сразу' }, // override one string
@@ -417,7 +484,7 @@ client.setLocale();              // re-read the system language
 ### Localizing your own UI
 
 ```tsx
-import { useTeletypeStrings, useLocale } from 'teletype-react-native-sdk';
+import { useTeletypeStrings, useLocale } from 'teletype-sdk-rn';
 
 const strings = useTeletypeStrings(); // resolved strings for the active language
 const locale = useLocale();           // 'ru' | 'en' | …
@@ -464,7 +531,7 @@ Both demos show file attachments (📎 → device file picker via
 
 This SDK reimplements the web widget's protocol:
 
-- **REST** (`{apiUrl}api/v1/…`, host depends on `mode`): `widget/{id}/config`, `widget/ip`, `history/{id}/{appeal}/messages`, `POST widget-attachment/{channelId}` (multipart `file` + `appeal_id`, no auth), `collect`, `widget/error`, `widget/{id}/url`.
+- **REST** (`{apiUrl}api/v1/…`, host depends on `mode`): `widget/{id}/config`, `widget/ip`, `history/{id}/{appeal}/messages`, `POST widget-attachment/{channelId}` (multipart `file` + `externalId`, no auth), `collect`, `widget/error`, `widget/{id}/url`.
 - **WebSocket** (`socket.io` v2, `{wsUrl}` host depends on `mode`): emits `web widget message from person`, `auth person`, `set person data`, `seen`, `person typing`, `person opened widget`, `person rate appeal`, `person click widget channel`; listens for `init data to person`, `message from client`, `received`, `seen`, `operator typing`, `operator status change`, `appeal status change`.
 
 Payload keys are `snake_case` on the wire and normalized to `camelCase` when parsed.

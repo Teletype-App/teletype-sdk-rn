@@ -11,6 +11,8 @@ export type {
 export { ChatButtonSvg } from './svg';
 export type { ChatButtonSvgProps } from './svg';
 export { MessageList } from './MessageList';
+export { ScrollButton } from './ScrollButton';
+export type { ScrollButtonProps } from './ScrollButton';
 export { MessageBubble } from './MessageBubble';
 export { Composer } from './Composer';
 export { TypingIndicator } from './TypingIndicator';
@@ -19,6 +21,18 @@ export { ChatSafeAreaProvider, useChatSafeAreaInsets } from './safeArea';
 export type { EdgeInsets } from './safeArea';
 export { defaultTheme, mergeTheme } from './theme';
 export type { TeletypeTheme } from './theme';
+export {
+  CHAT_BACKGROUNDS,
+  CHAT_BACKGROUND_SOURCES,
+  CHAT_BACKGROUND_THUMBS,
+  CHAT_BACKGROUND_PICKER,
+  DEFAULT_CHAT_BACKGROUND,
+  chatBackgroundSource,
+  isChatBackground,
+} from './backgrounds';
+export type { ChatBackground } from './backgrounds';
+export { ModalSendFile } from './ModalSendFile';
+export type { PickedAttachment } from './attachments';
 export {
   MessageTypeImage,
   MessageTypeVideo,

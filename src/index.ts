@@ -1,5 +1,5 @@
 /**
- * teletype-react-native-sdk
+ * teletype-sdk-rn
  *
  * Native React Native SDK for embedding the Teletype online chat into iOS and
  * Android apps. Reuses the Teletype web widget's backend protocol (REST +
@@ -7,7 +7,7 @@
  *
  * Quick start:
  * ```tsx
- * import { TeletypeProvider, ChatWidget } from 'teletype-react-native-sdk';
+ * import { TeletypeProvider, ChatWidget } from 'teletype-sdk-rn';
  *
  * export default function App() {
  *   return (
@@ -16,8 +16,7 @@
  *       title="Онлайн чат"
  *       primaryColor="#0084ff"
  *     >
- *       <MyApp />
- *       <ChatWidget />
+ *       <Root /> // ChatScreen when opened, otherwise app + ChatWidget
  *     </TeletypeProvider>
  *   );
  * }
@@ -38,6 +37,10 @@ export * from './types';
 
 // Config
 export { WsEvent, DEFAULT_PRIMARY_COLOR, DEFAULT_CHAT_TITLE } from './config/constants';
+export {
+  extractTeletypeExternalId,
+  isTeletypeExternalId,
+} from './config/externalId';
 export {
   DEFAULT_ENVIRONMENT,
   DEV_ENVIRONMENT,

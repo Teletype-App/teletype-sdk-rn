@@ -19,7 +19,14 @@ export class SocketClient {
     debug = false,
   ) {
     this.url = url;
-    this.options = { forceNew: true, ...options };
+    this.options = {
+      forceNew: true,
+      // React Native has no DOM; engine.io JSONP polling hangs forever and
+      // messages stay on "sending". The web widget never sets this because
+      // browsers can JSONP — we must disable it. XHR polling still works.
+      jsonp: false,
+      ...options,
+    };
     this.debug = debug;
   }
 
@@ -33,12 +40,26 @@ export class SocketClient {
 
   connect(): void {
     if (!this.socket) {
-      this.socket = io(this.url, this.options);
+      this.socket = io(this.url, { autoConnect: false, ...this.options });
       if (this.debug) {
         this.installDebugLogging(this.socket);
       }
-    } else if (this.socket.disconnected) {
+    }
+    if (this.socket.disconnected) {
       this.socket.connect();
+    }
+  }
+
+  /**
+   * Create the socket.io client without opening the connection, so listeners
+   * can be attached before `connect` fires.
+   */
+  ensureCreated(): void {
+    if (!this.socket) {
+      this.socket = io(this.url, { autoConnect: false, ...this.options });
+      if (this.debug) {
+        this.installDebugLogging(this.socket);
+      }
     }
   }
 

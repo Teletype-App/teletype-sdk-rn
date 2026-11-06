@@ -36,7 +36,7 @@ const fromApp = [
   'socket.io-client',
   '@react-native-async-storage/async-storage',
   'react-native-localize',
-  // Optional media peers used by teletype-react-native-sdk
+  // Optional media peers used by teletype-sdk-rn
   'react-native-video',
   'react-native-create-thumbnail',
   'react-native-blob-util',
