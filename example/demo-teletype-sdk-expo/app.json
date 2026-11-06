@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "Teletype SDK Example",
+    "slug": "teletype-sdk-example",
+    "version": "1.0.0",
+    "scheme": "teletypesdkexample",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.teletype.sdkexample"
+    },
+    "android": {
+      "package": "app.teletype.sdkexample"
+    },
+    "plugins": [
+      "expo-status-bar",
+      "react-native-localize"
+    ]
+  }
+}

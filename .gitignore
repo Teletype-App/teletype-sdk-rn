@@ -1,0 +1,25 @@
+# deps
+node_modules/
+example/node_modules/
+
+# build output
+lib/
+dist/
+
+# logs
+*.log
+npm-debug.*
+yarn-error.log
+
+# native / expo
+.expo/
+example/.expo/
+*.orig.*
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
+
+# env
+.env.local
